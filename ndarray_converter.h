@@ -4,6 +4,34 @@
 #include <Python.h>
 #include <opencv2/core/core.hpp>
 
+#include <numpy/ndarrayobject.h>
+
+class NumpyAllocator : public cv::MatAllocator
+{
+public:
+    NumpyAllocator();
+    ~NumpyAllocator();
+
+    cv::UMatData* allocate(PyObject* o, int dims, const int* sizes, int type, size_t* step) const;
+
+#if CV_MAJOR_VERSION < 4
+    cv::UMatData* allocate(int dims0, const int* sizes, int type, void* data, size_t* step, int flags, cv::UMatUsageFlags usageFlags) const;
+#else
+    cv::UMatData* allocate(int dims0, const int* sizes, int type, void* data, size_t* step, cv::AccessFlag flags, cv::UMatUsageFlags usageFlags) const;
+#endif
+
+#if CV_MAJOR_VERSION < 4
+    bool allocate(cv::UMatData* u, int accessFlags, cv::UMatUsageFlags usageFlags) const;
+#else
+    bool allocate(cv::UMatData* u, cv::AccessFlag accessFlags, cv::UMatUsageFlags usageFlags) const;
+#endif
+
+    void deallocate(cv::UMatData* u) const;
+
+private:
+    const cv::MatAllocator* stdAllocator;
+};
+extern NumpyAllocator g_numpyAllocator;
 
 class NDArrayConverter {
 public:

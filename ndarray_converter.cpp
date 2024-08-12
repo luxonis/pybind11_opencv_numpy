@@ -82,91 +82,93 @@ catch (const cv::Exception &e) \
 
 using namespace cv;
 
-class NumpyAllocator : public MatAllocator
+// Constructor
+NumpyAllocator::NumpyAllocator() {
+    stdAllocator = cv::Mat::getStdAllocator();
+}
+
+// Destructor
+NumpyAllocator::~NumpyAllocator() {}
+
+// Allocate with PyObject
+cv::UMatData* NumpyAllocator::allocate(PyObject* o, int dims, const int* sizes, int type, size_t* step) const {
+    cv::UMatData* u = new cv::UMatData(this);
+    u->data = u->origdata = (uchar*)PyArray_DATA((PyArrayObject*)o);
+    npy_intp* _strides = PyArray_STRIDES((PyArrayObject*)o);
+    for (int i = 0; i < dims - 1; i++)
+        step[i] = (size_t)_strides[i];
+    step[dims - 1] = CV_ELEM_SIZE(type);
+    u->size = sizes[0] * step[0];
+    u->userdata = o;
+    return u;
+}
+
+#if CV_MAJOR_VERSION < 4
+cv::UMatData* NumpyAllocator::allocate(int dims0, const int* sizes, int type, void* data, size_t* step, int flags, cv::UMatUsageFlags usageFlags) const
+#else
+cv::UMatData* NumpyAllocator::allocate(int dims0, const int* sizes, int type, void* data, size_t* step, cv::AccessFlag flags, cv::UMatUsageFlags usageFlags) const
+#endif
 {
-public:
-    NumpyAllocator() { stdAllocator = Mat::getStdAllocator(); }
-    ~NumpyAllocator() {}
-
-    UMatData* allocate(PyObject* o, int dims, const int* sizes, int type, size_t* step) const
-    {
-        UMatData* u = new UMatData(this);
-        u->data = u->origdata = (uchar*)PyArray_DATA((PyArrayObject*) o);
-        npy_intp* _strides = PyArray_STRIDES((PyArrayObject*) o);
-        for( int i = 0; i < dims - 1; i++ )
-            step[i] = (size_t)_strides[i];
-        step[dims-1] = CV_ELEM_SIZE(type);
-        u->size = sizes[0]*step[0];
-        u->userdata = o;
-        return u;
+    if (data != nullptr) {
+        CV_Error(cv::Error::StsAssert, "The data should normally be NULL!");
+        // probably this is safe to do in such extreme case
+        return stdAllocator->allocate(dims0, sizes, type, data, step, flags, usageFlags);
     }
+    PyEnsureGIL gil;
 
-#if CV_MAJOR_VERSION < 4
-    UMatData* allocate(int dims0, const int* sizes, int type, void* data, size_t* step, int flags, UMatUsageFlags usageFlags) const
-#else
-    UMatData* allocate(int dims0, const int* sizes, int type, void* data, size_t* step, AccessFlag flags, UMatUsageFlags usageFlags) const
-#endif
-    {
-        if( data != 0 )
-        {
-            CV_Error(Error::StsAssert, "The data should normally be NULL!");
-            // probably this is safe to do in such extreme case
-            return stdAllocator->allocate(dims0, sizes, type, data, step, flags, usageFlags);
-        }
-        PyEnsureGIL gil;
-
-        int depth = CV_MAT_DEPTH(type);
-        int cn = CV_MAT_CN(type);
-        const int f = (int)(sizeof(size_t)/8);
-        int typenum = depth == CV_8U ? NPY_UBYTE : depth == CV_8S ? NPY_BYTE :
-        depth == CV_16U ? NPY_USHORT : depth == CV_16S ? NPY_SHORT :
-        depth == CV_32S ? NPY_INT : depth == CV_32F ? NPY_FLOAT :
-        depth == CV_64F ? NPY_DOUBLE : f*NPY_ULONGLONG + (f^1)*NPY_UINT;
-        int i, dims = dims0;
-        cv::AutoBuffer<npy_intp> _sizes(dims + 1);
-        for( i = 0; i < dims; i++ )
-            _sizes[i] = sizes[i];
-        if( cn > 1 )
-            _sizes[dims++] = cn;
+    int depth = CV_MAT_DEPTH(type);
+    int cn = CV_MAT_CN(type);
+    const int f = (int)(sizeof(size_t) / 8);
+    int typenum = depth == CV_8U ? NPY_UBYTE :
+                  depth == CV_8S ? NPY_BYTE :
+                  depth == CV_16U ? NPY_USHORT :
+                  depth == CV_16S ? NPY_SHORT :
+                  depth == CV_32S ? NPY_INT :
+                  depth == CV_32F ? NPY_FLOAT :
+                  depth == CV_64F ? NPY_DOUBLE :
+                  f * NPY_ULONGLONG + (f ^ 1) * NPY_UINT;
+    int i, dims = dims0;
+    cv::AutoBuffer<npy_intp> _sizes(dims + 1);
+    for (i = 0; i < dims; i++)
+        _sizes[i] = sizes[i];
+    if (cn > 1)
+        _sizes[dims++] = cn;
 #if CV_MAJOR_VERSION >= 4 || (CV_MAJOR_VERSION == 3 && CV_VERSION_MINOR >= 5) || (CV_MAJOR_VERSION == 3 && CV_VERSION_MINOR == 4 && CV_VERSION_REVISION >= 3)
-        // Use cv::AutoBuffer::data() in OpenCV 3.4.3 and above
-        PyObject* o = PyArray_SimpleNew(dims, _sizes.data(), typenum);
+    // Use cv::AutoBuffer::data() in OpenCV 3.4.3 and above
+    PyObject* o = PyArray_SimpleNew(dims, _sizes.data(), typenum);
 #else
-        // Use older cv::AutoBuffer::operator _Tp*()
-        PyObject* o = PyArray_SimpleNew(dims, &(_sizes[0]), typenum);
+    // Use older cv::AutoBuffer::operator _Tp*()
+    PyObject* o = PyArray_SimpleNew(dims, &(_sizes[0]), typenum);
 #endif
-        if(!o)
-            CV_Error_(Error::StsError, ("The numpy array of typenum=%d, ndims=%d can not be created", typenum, dims));
-        return allocate(o, dims0, sizes, type, step);
-    }
+    if (!o)
+        CV_Error_(cv::Error::StsError, ("The numpy array of typenum=%d, ndims=%d can not be created", typenum, dims));
+    return allocate(o, dims0, sizes, type, step);
+}
 
 #if CV_MAJOR_VERSION < 4
-    bool allocate(UMatData* u, int accessFlags, UMatUsageFlags usageFlags) const
+bool NumpyAllocator::allocate(cv::UMatData* u, int accessFlags, cv::UMatUsageFlags usageFlags) const
 #else
-    bool allocate(UMatData* u, AccessFlag accessFlags, UMatUsageFlags usageFlags) const
+bool NumpyAllocator::allocate(cv::UMatData* u, cv::AccessFlag accessFlags, cv::UMatUsageFlags usageFlags) const
 #endif
-    {
-        return stdAllocator->allocate(u, accessFlags, usageFlags);
+{
+    return stdAllocator->allocate(u, accessFlags, usageFlags);
+}
+
+// Deallocate function
+void NumpyAllocator::deallocate(cv::UMatData* u) const {
+    if (!u)
+        return;
+    PyEnsureGIL gil;
+    CV_Assert(u->urefcount >= 0);
+    CV_Assert(u->refcount >= 0);
+    if (u->refcount == 0) {
+        PyObject* o = (PyObject*)u->userdata;
+        Py_XDECREF(o);
+        delete u;
     }
+}
 
-    void deallocate(UMatData* u) const
-    {
-        if(!u)
-            return;
-        PyEnsureGIL gil;
-        CV_Assert(u->urefcount >= 0);
-        CV_Assert(u->refcount >= 0);
-        if(u->refcount == 0)
-        {
-            PyObject* o = (PyObject*)u->userdata;
-            Py_XDECREF(o);
-            delete u;
-        }
-    }
-
-    const MatAllocator* stdAllocator;
-};
-
+// Global instance
 NumpyAllocator g_numpyAllocator;
 
 bool NDArrayConverter::toMat(PyObject *o, Mat &m)

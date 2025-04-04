@@ -3,7 +3,6 @@
 
 #include "ndarray_converter.h"
 
-#define NPY_NO_DEPRECATED_API NPY_1_7_API_VERSION
 #include <numpy/ndarrayobject.h>
 
 #if PY_VERSION_HEX >= 0x03000000

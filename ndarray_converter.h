@@ -3,7 +3,7 @@
 
 #include <Python.h>
 #include <opencv2/core/core.hpp>
-
+#define NPY_NO_DEPRECATED_API NPY_1_7_API_VERSION
 #include <numpy/ndarrayobject.h>
 
 class NumpyAllocator : public cv::MatAllocator
